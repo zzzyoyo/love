@@ -42,7 +42,7 @@ export default function Home() {
   if (isChecking) return null;
 
   return (
-    <main className="min-h-screen text-stone-700 font-sans relative">
+    <main className="min-h-screen text-stone-700 font-sans relative overflow-hidden">
       <FloatingElements />
       <ShootHoop />
       {!isUnlocked ? (

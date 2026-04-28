@@ -20,6 +20,7 @@
 }
 
 body {
+  /* 轻柔朴素的暖色渐变背景 */
   background: linear-gradient(135deg, #fff0f5 0%, #ffe4e1 50%, #fffafa 100%);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;

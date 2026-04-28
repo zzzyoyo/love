@@ -6,17 +6,17 @@ export default function ShootHoop() {
       <style>{`
         @keyframes custom-shoot-ball {
           0% {
-            transform: translate(-150px, 150px) rotate(0deg) scale(0.6);
+            transform: translate(-120px, 120px) rotate(0deg) scale(0.6);
             opacity: 0;
           }
           10% {
             opacity: 1;
           }
           30% {
-            transform: translate(-50px, -40px) rotate(180deg) scale(1.1);
+            transform: translate(-40px, -30px) rotate(180deg) scale(1.1);
           }
           50% {
-            transform: translate(0px, 0px) rotate(360deg) scale(0.95);
+            transform: translate(0px, -5px) rotate(360deg) scale(0.95);
             opacity: 1;
           }
           60% {
@@ -27,7 +27,7 @@ export default function ShootHoop() {
             opacity: 0;
           }
           100% {
-            transform: translate(0px, 150px) rotate(720deg) scale(0.7);
+            transform: translate(0px, 120px) rotate(720deg) scale(0.7);
             opacity: 0;
           }
         }
@@ -53,7 +53,7 @@ export default function ShootHoop() {
 
         {/* ===================== 动画篮球 ===================== */}
         {/* 篮球的初始位置设为篮筐正上方中心区域附近，靠动画改变 transform */}
-        <div className="absolute top-[2.8rem] text-3xl z-[15] drop-shadow-md animate-custom-shoot">
+        <div className="absolute top-[2.8rem] text-4xl z-[15] drop-shadow-md animate-custom-shoot">
           🏀
         </div>
 
