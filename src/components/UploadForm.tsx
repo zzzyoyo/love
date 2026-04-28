@@ -5,8 +5,13 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Plus, X, UploadCloud, Calendar, FileText, Loader2 } from 'lucide-react';
 import { supabase } from '@/lib/supabaseClient';
 import toast, { Toaster } from 'react-hot-toast';
+import type { TimelineEvent } from '@/components/Timeline';
 
-export default function UploadForm() {
+interface UploadFormProps {
+  onUploaded?: (event: TimelineEvent) => void;
+}
+
+export default function UploadForm({ onUploaded }: UploadFormProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [file, setFile] = useState<File | null>(null);
@@ -25,6 +30,20 @@ export default function UploadForm() {
     if (e.target.files && e.target.files[0]) {
       setFile(e.target.files[0]);
     }
+  };
+
+  const createSignedUrl = async (filePath: string) => {
+    if (!filePath) return '';
+    const { data, error } = await supabase.storage
+      .from('love-media')
+      .createSignedUrl(filePath, 60 * 60);
+
+    if (error) {
+      console.error('Error creating signed url:', error);
+      return '';
+    }
+
+    return data.signedUrl;
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -69,26 +88,31 @@ export default function UploadForm() {
       }
 
       // 写入到数据库
-      const { error: dbError } = await supabase
+      const { data: inserted, error: dbError } = await supabase
         .from('timeline_events')
         .insert({
           event_date: date,
           content: content,
           media_url: mediaUrl,
           media_type: mediaType,
-        });
+        })
+        .select('*')
+        .single();
 
       if (dbError) {
         throw new Error('保存日记失败: ' + dbError.message);
       }
 
+      if (inserted) {
+        const signedUrl = mediaUrl ? await createSignedUrl(mediaUrl) : '';
+        onUploaded?.({
+          ...inserted,
+          media_url: signedUrl || inserted.media_url,
+        } as TimelineEvent);
+      }
+
       toast.success('专属回忆添加成功！🎉');
       handleClose();
-
-      // 刷新页面，或者你可以用 context 更新列表
-      setTimeout(() => {
-        window.location.reload();
-      }, 1500);
 
     } catch (err: unknown) {
       if (err instanceof Error) {
@@ -199,12 +223,12 @@ export default function UploadForm() {
                 {/* Content Area */}
                 <div>
                   <label className="flex items-center gap-2 text-sm font-semibold text-gray-700 mb-2">
-                    <FileText size={18} className="text-[#C5B3AA]"/> 想说的情话
+                    <FileText size={18} className="text-[#C5B3AA]"/> 碎碎念
                   </label>
                   <textarea
                     required
                     rows={4}
-                    placeholder="今天发生了什么好玩的事？有什么想告诉ta的..."
+                    placeholder="这一天发生了什么好玩的事？有什么想告诉ta的..."
                     value={content}
                     onChange={(e) => setContent(e.target.value)}
                     className="w-full border-2 border-stone-200 rounded-xl px-4 py-3 focus:outline-none focus:border-[#D0B8B0] focus:ring-4 focus:ring-[#E8DDD8]/50 text-gray-700 transition-all resize-none shadow-sm"

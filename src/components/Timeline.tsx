@@ -14,7 +14,11 @@ export interface TimelineEvent {
   created_at: string;
 }
 
-export default function Timeline() {
+interface TimelineProps {
+  newEvent?: TimelineEvent | null;
+}
+
+export default function Timeline({ newEvent }: TimelineProps) {
   const [events, setEvents] = useState<TimelineEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [authError, setAuthError] = useState('');
@@ -54,6 +58,12 @@ export default function Timeline() {
     return data.signedUrl;
   };
 
+  const sortByEventDateAsc = (list: TimelineEvent[]) =>
+    [...list].sort(
+      (a, b) =>
+        new Date(a.event_date).getTime() - new Date(b.event_date).getTime()
+    );
+
   const fetchEvents = async () => {
     try {
       setLoading(true);
@@ -66,11 +76,11 @@ export default function Timeline() {
         return;
       }
 
-      // Retrieve everything ordered by event_date desc
+      // Retrieve everything ordered by event_date asc
       const { data, error } = await supabase
         .from('timeline_events')
         .select('*')
-        .order('event_date', { ascending: false });
+        .order('event_date', { ascending: true });
 
       if (error) {
         console.error('Error fetching events:', error);
@@ -86,7 +96,7 @@ export default function Timeline() {
             };
           })
         );
-        setEvents(signedEvents as TimelineEvent[]);
+        setEvents(sortByEventDateAsc(signedEvents as TimelineEvent[]));
       }
     } finally {
       setLoading(false);
@@ -96,6 +106,16 @@ export default function Timeline() {
   useEffect(() => {
     fetchEvents();
   }, []);
+
+  useEffect(() => {
+    if (!newEvent) return;
+    setEvents((prev) => {
+      if (prev.some((event) => event.id === newEvent.id)) {
+        return prev;
+      }
+      return sortByEventDateAsc([newEvent, ...prev]);
+    });
+  }, [newEvent]);
 
   if (loading) {
     return (

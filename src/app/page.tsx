@@ -3,13 +3,14 @@
 
 import { useState, useEffect } from 'react';
 import UnlockGate from '@/components/UnlockGate';
-import Timeline from '@/components/Timeline';
+import Timeline, { type TimelineEvent } from '@/components/Timeline';
 import UploadForm from '@/components/UploadForm';
 import { supabase } from '@/lib/supabaseClient';
 
 export default function Home() {
   const [isUnlocked, setIsUnlocked] = useState(false);
   const [isChecking, setIsChecking] = useState(true);
+  const [newEvent, setNewEvent] = useState<TimelineEvent | null>(null);
 
   useEffect(() => {
     let isActive = true;
@@ -52,8 +53,8 @@ export default function Home() {
             </h1>
           </header>
 
-          <Timeline />
-          <UploadForm />
+          <Timeline newEvent={newEvent} />
+          <UploadForm onUploaded={(event) => setNewEvent(event)} />
         </div>
       )}
     </main>
