@@ -9,6 +9,8 @@ const supabaseAnonKey =
   '';
 
 const expectedDate = process.env.LOVE_DIARY_ANSWER_DATE || '2024-04-19';
+const expectedQuestion =
+  process.env.LOVE_DIARY_ANSWER_QUESTION || '你爱我吗？';
 const expectedMessage = process.env.LOVE_DIARY_ANSWER_MESSAGE || '我爱你！';
 const unlockEmail = process.env.LOVE_DIARY_UNLOCK_EMAIL || '';
 const unlockPassword = process.env.LOVE_DIARY_UNLOCK_PASSWORD || '';
@@ -43,7 +45,8 @@ export async function POST(request: NextRequest) {
   }
   lastAttemptByIp.set(ip, now);
 
-  let payload: { date?: string; message?: string } | null = null;
+  let payload: { date?: string; question?: string; message?: string } | null =
+    null;
   try {
     payload = await request.json();
   } catch {
@@ -54,15 +57,20 @@ export async function POST(request: NextRequest) {
   }
 
   const date = payload?.date?.trim();
+  const question = payload?.question?.trim();
   const message = payload?.message?.trim();
-  if (!date || !message) {
+  if (!date || !question || !message) {
     return Response.json(
       { error: '请填写完整答案' },
       { status: 400, headers: { 'Cache-Control': 'no-store' } }
     );
   }
 
-  if (date !== expectedDate || message !== expectedMessage) {
+  if (
+    date !== expectedDate ||
+    question !== expectedQuestion ||
+    message !== expectedMessage
+  ) {
     return Response.json(
       { error: '答案不正确' },
       { status: 401, headers: { 'Cache-Control': 'no-store' } }

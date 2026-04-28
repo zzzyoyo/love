@@ -11,6 +11,7 @@ interface UnlockGateProps {
 
 export default function UnlockGate({ onUnlock }: UnlockGateProps) {
   const [date, setDate] = useState('');
+  const [question, setQuestion] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -24,7 +25,7 @@ export default function UnlockGate({ onUnlock }: UnlockGateProps) {
       const response = await fetch('/api/auth/unlock', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ date, message }),
+        body: JSON.stringify({ date, question, message }),
       });
 
       const payload = await response.json();
@@ -72,6 +73,20 @@ export default function UnlockGate({ onUnlock }: UnlockGateProps) {
               placeholder="YYYY-MM-DD"
               value={date}
               onChange={(e) => setDate(e.target.value)}
+              className="w-full px-4 py-2 border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#E8DDD8] bg-white/50"
+              required
+            />
+          </div>
+
+          <div className="text-left">
+            <label className="block text-sm font-medium text-stone-500 mb-1">
+              zyr 最爱问 zw 什么问题？
+            </label>
+            <input
+              type="text"
+              placeholder="请输入答案..."
+              value={question}
+              onChange={(e) => setQuestion(e.target.value)}
               className="w-full px-4 py-2 border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#E8DDD8] bg-white/50"
               required
             />

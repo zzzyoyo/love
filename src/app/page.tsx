@@ -5,6 +5,8 @@ import { useState, useEffect } from 'react';
 import UnlockGate from '@/components/UnlockGate';
 import Timeline, { type TimelineEvent } from '@/components/Timeline';
 import UploadForm from '@/components/UploadForm';
+import FloatingElements from '@/components/FloatingElements';
+import ShootHoop from '@/components/ShootHoop';
 import { supabase } from '@/lib/supabaseClient';
 
 export default function Home() {
@@ -40,11 +42,13 @@ export default function Home() {
   if (isChecking) return null;
 
   return (
-    <main className="min-h-screen bg-[#FAFAF9] text-stone-700 font-sans">
+    <main className="min-h-screen text-stone-700 font-sans relative">
+      <FloatingElements />
+      <ShootHoop />
       {!isUnlocked ? (
         <UnlockGate onUnlock={handleUnlock} />
       ) : (
-        <div className="relative pb-24 h-full"> 
+        <div className="relative pb-24 h-full relative z-10">
           {/* header area */}
           <header className="pt-10 pb-6 text-center">
             <h1 className="text-4xl font-extrabold text-stone-700 drop-shadow-sm font-serif flex justify-center items-center gap-2">
