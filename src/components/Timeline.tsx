@@ -310,25 +310,31 @@ export default function Timeline({ newEvent }: TimelineProps) {
     fetchPage(page + 1, false);
   };
 
-  const handleLoadMoreRef = useCallback(() => {
-    if (loadingMore || !hasMore) return;
-    fetchPage(page + 1, false);
-  }, [loadingMore, hasMore, page]);
+  const stateRef = useRef({ page, loadingMore, hasMore, fetchPage });
 
   useEffect(() => {
-    if (!loadMoreRef.current) return;
+    stateRef.current = { page, loadingMore, hasMore, fetchPage };
+  });
+
+  useEffect(() => {
+    const node = loadMoreRef.current;
+    if (!node) return;
+
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries[0]?.isIntersecting) {
-          handleLoadMoreRef();
+          const { page: currPage, loadingMore: isLoad, hasMore: hasM, fetchPage: doFetch } = stateRef.current;
+          if (!isLoad && hasM) {
+            doFetch(currPage + 1, false);
+          }
         }
       },
       { rootMargin: '200px' }
     );
 
-    observer.observe(loadMoreRef.current);
+    observer.observe(node);
     return () => observer.disconnect();
-  }, [handleLoadMoreRef]);
+  }, []); // Only run once!
 
   if (loading) {
     return (
@@ -352,7 +358,7 @@ export default function Timeline({ newEvent }: TimelineProps) {
 
   return (
     <div ref={timelineRef} className="max-w-3xl mx-auto px-4 py-8 relative">
-      <div className="fixed top-4 right-4 z-50 flex flex-wrap items-center justify-end gap-3 bg-white/90 backdrop-blur px-3 py-2 rounded-xl shadow-md">
+      <div className="fixed top-4 right-4 z-50 flex flex-col items-end gap-2 bg-white/90 backdrop-blur px-3 py-2 rounded-xl shadow-md">
         <select
           value={selectedYear}
           onChange={(e) => {
@@ -399,7 +405,7 @@ export default function Timeline({ newEvent }: TimelineProps) {
         </div>
       )}
 
-      <div className="absolute left-8 md:left-1/2 top-0 bottom-0 w-1 bg-[#E8DDD8] transform md:-translate-x-1/2 rounded-full hidden md:block"></div>
+      <div className="absolute left-1/2 top-0 bottom-0 w-1 bg-[#E8DDD8] transform -translate-x-1/2 rounded-full"></div>
 
       {events.map((event, index) => (
         <motion.div
@@ -407,23 +413,23 @@ export default function Timeline({ newEvent }: TimelineProps) {
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5, delay: index * 0.1 }}
           key={event.id}
-          className={`flex flex-col md:flex-row relative items-center gap-4 ${index % 2 === 0 ? 'md:flex-row-reverse' : ''}`}
+          className={`flex flex-row relative items-center gap-4 ${index % 2 === 0 ? 'flex-row-reverse' : ''}`}
           style={{
             marginTop: index === 0 ? 0 : -THUMB_CENTER_GAP,
           }}
         >
-          <div className="hidden md:flex absolute left-1/2 transform -translate-x-1/2 w-8 h-8 rounded-full bg-[#D0B8B0] border-4 border-[#FAFAF9] z-10 items-center justify-center">
+          <div className="flex absolute left-1/2 transform -translate-x-1/2 w-8 h-8 rounded-full bg-[#D0B8B0] border-4 border-[#FAFAF9] z-10 items-center justify-center">
             <div className="w-2 h-2 rounded-full bg-white"></div>
           </div>
 
           <div
-            className={`w-full md:w-1/2 px-2 flex ${
-              index % 2 === 0 ? 'md:justify-start' : 'md:justify-end'
+            className={`w-1/2 px-2 flex ${
+              index % 2 === 0 ? 'justify-start' : 'justify-end'
             }`}
           >
             <div className="inline-block bg-white p-5 rounded-2xl shadow-lg hover:shadow-xl transition-shadow border-t-4 border-[#E8DDD8] relative max-w-full">
-              <div className="text-sm font-semibold text-stone-500 mb-3 bg-[#FAFAF9] inline-block px-3 py-1 rounded-full">
-                {format(new Date(event.event_date), 'yyyy年MM月dd日')}
+              <div className="text-sm font-semibold text-stone-500 mb-3 bg-[#FAFAF9] inline-block px-3 py-1 rounded-full whitespace-nowrap">
+                {format(new Date(event.event_date), 'yyyy.MM.dd')}
               </div>
 
               {event.media_url && (
