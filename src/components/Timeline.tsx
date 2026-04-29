@@ -21,78 +21,95 @@ interface TimelineProps {
 const PAGE_SIZE = 10;
 const THUMB_HEIGHT = 224;
 const THUMB_CENTER_GAP = THUMB_HEIGHT / 2;
+const SIGNED_URL_TTL_MS = 55 * 60 * 1000;
+
+type SignedUrlEntry = { url: string; expiresAt: number };
+type TimelineCache = {
+  events: TimelineEvent[] | null;
+  page: number;
+  hasMore: boolean;
+  totalCount: number | null;
+  monthOptions: { year: number; month: number; label: string }[];
+  selectedYear: number | '';
+  selectedMonth: number | '';
+  signedUrlByPath: Record<string, SignedUrlEntry>;
+};
+
+const timelineCache: TimelineCache = {
+  events: null,
+  page: 0,
+  hasMore: true,
+  totalCount: null,
+  monthOptions: [],
+  selectedYear: '',
+  selectedMonth: '',
+  signedUrlByPath: {},
+};
+
+const normalizeMediaPath = (rawUrl: string) => {
+  if (!rawUrl) return { filePath: '', shouldSign: false, fallbackUrl: '' };
+  if (rawUrl.startsWith('http')) {
+    const publicPrefix = '/storage/v1/object/public/love-media/';
+    const signedPrefix = '/storage/v1/object/sign/love-media/';
+    const publicIndex = rawUrl.indexOf(publicPrefix);
+    const signedIndex = rawUrl.indexOf(signedPrefix);
+
+    if (publicIndex !== -1) {
+      return {
+        filePath: rawUrl.slice(publicIndex + publicPrefix.length),
+        shouldSign: true,
+        fallbackUrl: rawUrl,
+      };
+    }
+
+    if (signedIndex !== -1) {
+      let filePath = rawUrl.slice(signedIndex + signedPrefix.length);
+      const queryIndex = filePath.indexOf('?');
+      if (queryIndex !== -1) {
+        filePath = filePath.slice(0, queryIndex);
+      }
+      return { filePath, shouldSign: true, fallbackUrl: rawUrl };
+    }
+
+    return { filePath: '', shouldSign: false, fallbackUrl: rawUrl };
+  }
+
+  return { filePath: rawUrl, shouldSign: true, fallbackUrl: rawUrl };
+};
 
 export default function Timeline({ newEvent }: TimelineProps) {
   const timelineRef = useRef<HTMLDivElement | null>(null);
-  const loadMoreRef = useRef<HTMLDivElement | null>(null);
-  const [events, setEvents] = useState<TimelineEvent[]>([]);
-  const [loading, setLoading] = useState(true);
+  const observerRef = useRef<IntersectionObserver | null>(null);
+  const isFetchingRef = useRef(false);
+  const [events, setEvents] = useState<TimelineEvent[]>(
+    () => timelineCache.events ?? []
+  );
+  const [loading, setLoading] = useState(() => !timelineCache.events);
   const [loadingMore, setLoadingMore] = useState(false);
   const [authError, setAuthError] = useState('');
   const [infoMessage, setInfoMessage] = useState('');
-  const [page, setPage] = useState(0);
-  const [hasMore, setHasMore] = useState(true);
-  const [totalCount, setTotalCount] = useState<number | null>(null);
+  const [page, setPage] = useState(() => timelineCache.page ?? 0);
+  const [hasMore, setHasMore] = useState(() => timelineCache.hasMore ?? true);
+  const [totalCount, setTotalCount] = useState<number | null>(
+    () => timelineCache.totalCount ?? null
+  );
   const [monthOptions, setMonthOptions] = useState<
     { year: number; month: number; label: string }[]
-  >([]);
-  const [selectedYear, setSelectedYear] = useState<number | ''>('');
-  const [selectedMonth, setSelectedMonth] = useState<number | ''>('');
+  >(() => timelineCache.monthOptions ?? []);
+  const [selectedYear, setSelectedYear] = useState<number | ''>(
+    () => timelineCache.selectedYear ?? ''
+  );
+  const [selectedMonth, setSelectedMonth] = useState<number | ''>(
+    () => timelineCache.selectedMonth ?? ''
+  );
 
-  const resolveSignedUrl = async (rawUrl: string) => {
-    if (!rawUrl) return '';
+  const getSignedUrl = async (rawUrl: string) => {
+    const { filePath, shouldSign, fallbackUrl } = normalizeMediaPath(rawUrl);
+    if (!shouldSign) return { signedUrl: fallbackUrl, filePath };
 
-    let filePath = rawUrl;
-    if (rawUrl.startsWith('http')) {
-      const publicPrefix = '/storage/v1/object/public/love-media/';
-      const signedPrefix = '/storage/v1/object/sign/love-media/';
-      const publicIndex = rawUrl.indexOf(publicPrefix);
-      const signedIndex = rawUrl.indexOf(signedPrefix);
-
-      if (publicIndex !== -1) {
-        filePath = rawUrl.slice(publicIndex + publicPrefix.length);
-      } else if (signedIndex !== -1) {
-        filePath = rawUrl.slice(signedIndex + signedPrefix.length);
-        const queryIndex = filePath.indexOf('?');
-        if (queryIndex !== -1) {
-          filePath = filePath.slice(0, queryIndex);
-        }
-      } else {
-        return rawUrl;
-      }
-    }
-
-    const { data, error } = await supabase.storage
-      .from('love-media')
-      .createSignedUrl(filePath, 60 * 60);
-
-    if (error) {
-      console.error('Error creating signed url:', error);
-      return '';
-    }
-
-    return data.signedUrl;
-  };
-
-  const buildSignedUrl = async (rawUrl: string) => {
-    if (!rawUrl) return { signedUrl: '', filePath: '' };
-
-    let filePath = rawUrl;
-    if (rawUrl.startsWith('http')) {
-      const publicPrefix = '/storage/v1/object/public/love-media/';
-      const signedPrefix = '/storage/v1/object/sign/love-media/';
-      const publicIndex = rawUrl.indexOf(publicPrefix);
-      const signedIndex = rawUrl.indexOf(signedPrefix);
-
-      if (publicIndex !== -1) {
-        filePath = rawUrl.slice(publicIndex + publicPrefix.length);
-      } else if (signedIndex !== -1) {
-        filePath = rawUrl.slice(signedIndex + signedPrefix.length);
-        const queryIndex = filePath.indexOf('?');
-        if (queryIndex !== -1) {
-          filePath = filePath.slice(0, queryIndex);
-        }
-      }
+    const cached = timelineCache.signedUrlByPath[filePath];
+    if (cached && cached.expiresAt > Date.now()) {
+      return { signedUrl: cached.url, filePath };
     }
 
     const { data, error } = await supabase.storage
@@ -103,6 +120,11 @@ export default function Timeline({ newEvent }: TimelineProps) {
       console.error('Error creating signed url:', error);
       return { signedUrl: '', filePath };
     }
+
+    timelineCache.signedUrlByPath[filePath] = {
+      url: data.signedUrl,
+      expiresAt: Date.now() + SIGNED_URL_TTL_MS,
+    };
 
     return { signedUrl: data.signedUrl, filePath };
   };
@@ -159,6 +181,8 @@ export default function Timeline({ newEvent }: TimelineProps) {
 
   const fetchPage = async (pageIndex: number, replace = false) => {
     try {
+      if (isFetchingRef.current && !replace) return;
+      isFetchingRef.current = true;
       if (replace) {
         setLoading(true);
       } else {
@@ -190,7 +214,7 @@ export default function Timeline({ newEvent }: TimelineProps) {
         const signedEvents = await Promise.all(
           (data as TimelineEvent[]).map(async (event) => {
             if (!event.media_url) return event;
-            const signedUrl = await resolveSignedUrl(event.media_url);
+            const { signedUrl } = await getSignedUrl(event.media_url);
             return {
               ...event,
               media_url: signedUrl || event.media_url,
@@ -213,6 +237,7 @@ export default function Timeline({ newEvent }: TimelineProps) {
         });
       }
     } finally {
+      isFetchingRef.current = false;
       setLoading(false);
       setLoadingMore(false);
     }
@@ -230,6 +255,14 @@ export default function Timeline({ newEvent }: TimelineProps) {
         return;
       }
 
+      if (timelineCache.events?.length) {
+        setLoading(false);
+        if (!timelineCache.monthOptions.length) {
+          fetchBounds();
+        }
+        return;
+      }
+
       fetchPage(0, true);
       fetchBounds();
     });
@@ -238,11 +271,23 @@ export default function Timeline({ newEvent }: TimelineProps) {
       (_event, session) => {
         if (session) {
           setAuthError('');
+          if (timelineCache.events?.length) {
+            setLoading(false);
+            return;
+          }
           fetchPage(0, true);
           fetchBounds();
         } else {
           setAuthError('请先解锁再查看回忆');
           setEvents([]);
+          timelineCache.events = null;
+          timelineCache.page = 0;
+          timelineCache.hasMore = true;
+          timelineCache.totalCount = null;
+          timelineCache.monthOptions = [];
+          timelineCache.selectedYear = '';
+          timelineCache.selectedMonth = '';
+          timelineCache.signedUrlByPath = {};
         }
       }
     );
@@ -255,12 +300,30 @@ export default function Timeline({ newEvent }: TimelineProps) {
 
   useEffect(() => {
     if (!newEvent) return;
-    setEvents((prev) => {
-      if (prev.some((event) => event.id === newEvent.id)) {
-        return prev;
-      }
-      return sortByEventDateAsc([newEvent, ...prev]);
-    });
+    let isActive = true;
+
+    const addNewEvent = async () => {
+      const signed = newEvent.media_url
+        ? await getSignedUrl(newEvent.media_url)
+        : { signedUrl: '', filePath: '' };
+      if (!isActive) return;
+      const normalizedEvent = signed.signedUrl
+        ? { ...newEvent, media_url: signed.signedUrl }
+        : newEvent;
+
+      setEvents((prev) => {
+        if (prev.some((event) => event.id === normalizedEvent.id)) {
+          return prev;
+        }
+        return sortByEventDateAsc([normalizedEvent, ...prev]);
+      });
+    };
+
+    addNewEvent();
+
+    return () => {
+      isActive = false;
+    };
   }, [newEvent]);
 
   const years = useMemo(
@@ -305,36 +368,48 @@ export default function Timeline({ newEvent }: TimelineProps) {
     }
   };
 
-  const handleLoadMore = () => {
-    if (loadingMore || !hasMore) return;
-    fetchPage(page + 1, false);
-  };
-
   const stateRef = useRef({ page, loadingMore, hasMore, fetchPage });
 
   useEffect(() => {
     stateRef.current = { page, loadingMore, hasMore, fetchPage };
   });
 
-  useEffect(() => {
-    const node = loadMoreRef.current;
+  const loadMoreRef = useCallback((node: HTMLDivElement | null) => {
+    if (observerRef.current) {
+      observerRef.current.disconnect();
+      observerRef.current = null;
+    }
+
     if (!node) return;
 
-    const observer = new IntersectionObserver(
+    observerRef.current = new IntersectionObserver(
       (entries) => {
-        if (entries[0]?.isIntersecting) {
-          const { page: currPage, loadingMore: isLoad, hasMore: hasM, fetchPage: doFetch } = stateRef.current;
-          if (!isLoad && hasM) {
-            doFetch(currPage + 1, false);
-          }
+        if (!entries[0]?.isIntersecting) return;
+        const {
+          page: currPage,
+          loadingMore: isLoad,
+          hasMore: hasM,
+          fetchPage: doFetch,
+        } = stateRef.current;
+        if (!isLoad && hasM) {
+          doFetch(currPage + 1, false);
         }
       },
       { rootMargin: '200px' }
     );
 
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, []); // Only run once!
+    observerRef.current.observe(node);
+  }, []);
+
+  useEffect(() => {
+    timelineCache.events = events;
+    timelineCache.page = page;
+    timelineCache.hasMore = hasMore;
+    timelineCache.totalCount = totalCount;
+    timelineCache.monthOptions = monthOptions;
+    timelineCache.selectedYear = selectedYear;
+    timelineCache.selectedMonth = selectedMonth;
+  }, [events, page, hasMore, totalCount, monthOptions, selectedYear, selectedMonth]);
 
   if (loading) {
     return (
@@ -442,7 +517,7 @@ export default function Timeline({ newEvent }: TimelineProps) {
                       data-path={event.media_url}
                       onError={async (e) => {
                         const target = e.currentTarget;
-                        const { signedUrl } = await buildSignedUrl(
+                        const { signedUrl } = await getSignedUrl(
                           target.dataset.path || ''
                         );
                         if (signedUrl) {
@@ -460,7 +535,7 @@ export default function Timeline({ newEvent }: TimelineProps) {
                       data-path={event.media_url}
                       onError={async (e) => {
                         const target = e.currentTarget;
-                        const { signedUrl } = await buildSignedUrl(
+                        const { signedUrl } = await getSignedUrl(
                           target.dataset.path || ''
                         );
                         if (signedUrl) {
