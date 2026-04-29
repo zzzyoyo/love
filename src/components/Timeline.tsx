@@ -24,25 +24,26 @@ const THUMB_CENTER_GAP = THUMB_HEIGHT / 2;
 const SIGNED_URL_TTL_MS = 55 * 60 * 1000;
 
 type SignedUrlEntry = { url: string; expiresAt: number };
+type LoadMode = 'replace' | 'append' | 'prepend';
 type TimelineCache = {
   events: TimelineEvent[] | null;
-  page: number;
+  startPage: number;
+  endPage: number;
   hasMore: boolean;
   totalCount: number | null;
   monthOptions: { year: number; month: number; label: string }[];
   selectedYear: number | '';
-  selectedMonth: number | '';
   signedUrlByPath: Record<string, SignedUrlEntry>;
 };
 
 const timelineCache: TimelineCache = {
   events: null,
-  page: 0,
+  startPage: 0,
+  endPage: 0,
   hasMore: true,
   totalCount: null,
   monthOptions: [],
   selectedYear: '',
-  selectedMonth: '',
   signedUrlByPath: {},
 };
 
@@ -77,10 +78,31 @@ const normalizeMediaPath = (rawUrl: string) => {
   return { filePath: rawUrl, shouldSign: true, fallbackUrl: rawUrl };
 };
 
+const buildMonthOptions = (start: Date, end: Date) => {
+  const options: { year: number; month: number; label: string }[] = [];
+  const cursor = new Date(start.getFullYear(), start.getMonth(), 1);
+  const last = new Date(end.getFullYear(), end.getMonth(), 1);
+
+  while (cursor <= last) {
+    const year = cursor.getFullYear();
+    const month = cursor.getMonth() + 1;
+    options.push({
+      year,
+      month,
+      label: `${year}年${String(month).padStart(2, '0')}月`,
+    });
+    cursor.setMonth(cursor.getMonth() + 1);
+  }
+
+  return options;
+};
+
 export default function Timeline({ newEvent }: TimelineProps) {
   const timelineRef = useRef<HTMLDivElement | null>(null);
+  const topObserverRef = useRef<IntersectionObserver | null>(null);
   const observerRef = useRef<IntersectionObserver | null>(null);
   const isFetchingRef = useRef(false);
+  const eventRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const [events, setEvents] = useState<TimelineEvent[]>(
     () => timelineCache.events ?? []
   );
@@ -88,7 +110,8 @@ export default function Timeline({ newEvent }: TimelineProps) {
   const [loadingMore, setLoadingMore] = useState(false);
   const [authError, setAuthError] = useState('');
   const [infoMessage, setInfoMessage] = useState('');
-  const [page, setPage] = useState(() => timelineCache.page ?? 0);
+  const [startPage, setStartPage] = useState(() => timelineCache.startPage ?? 0);
+  const [endPage, setEndPage] = useState(() => timelineCache.endPage ?? 0);
   const [hasMore, setHasMore] = useState(() => timelineCache.hasMore ?? true);
   const [totalCount, setTotalCount] = useState<number | null>(
     () => timelineCache.totalCount ?? null
@@ -99,11 +122,9 @@ export default function Timeline({ newEvent }: TimelineProps) {
   const [selectedYear, setSelectedYear] = useState<number | ''>(
     () => timelineCache.selectedYear ?? ''
   );
-  const [selectedMonth, setSelectedMonth] = useState<number | ''>(
-    () => timelineCache.selectedMonth ?? ''
-  );
+  const [pendingScrollToEventId, setPendingScrollToEventId] = useState('');
 
-  const getSignedUrl = async (rawUrl: string) => {
+  const getSignedUrl = useCallback(async (rawUrl: string) => {
     const { filePath, shouldSign, fallbackUrl } = normalizeMediaPath(rawUrl);
     if (!shouldSign) return { signedUrl: fallbackUrl, filePath };
 
@@ -127,7 +148,7 @@ export default function Timeline({ newEvent }: TimelineProps) {
     };
 
     return { signedUrl: data.signedUrl, filePath };
-  };
+  }, []);
 
   const sortByEventDateAsc = (list: TimelineEvent[]) =>
     [...list].sort((a, b) => {
@@ -137,26 +158,7 @@ export default function Timeline({ newEvent }: TimelineProps) {
       return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
     });
 
-  const buildMonthOptions = (start: Date, end: Date) => {
-    const options: { year: number; month: number; label: string }[] = [];
-    const cursor = new Date(start.getFullYear(), start.getMonth(), 1);
-    const last = new Date(end.getFullYear(), end.getMonth(), 1);
-
-    while (cursor <= last) {
-      const year = cursor.getFullYear();
-      const month = cursor.getMonth() + 1;
-      options.push({
-        year,
-        month,
-        label: `${year}年${String(month).padStart(2, '0')}月`,
-      });
-      cursor.setMonth(cursor.getMonth() + 1);
-    }
-
-    return options;
-  };
-
-  const fetchBounds = async () => {
+  const fetchBounds = useCallback(async () => {
     const { data: minData, error: minError } = await supabase
       .from('timeline_events')
       .select('event_date')
@@ -179,13 +181,14 @@ export default function Timeline({ newEvent }: TimelineProps) {
     const start = new Date(minData.event_date);
     const end = new Date(maxData.event_date);
     setMonthOptions(buildMonthOptions(start, end));
-  };
+  }, []);
 
-  const fetchPage = async (pageIndex: number, replace = false) => {
+  const fetchPage = useCallback(async (pageIndex: number, mode: LoadMode = 'append') => {
+    let succeeded = false;
     try {
-      if (isFetchingRef.current && !replace) return;
+      if (isFetchingRef.current && mode !== 'replace') return;
       isFetchingRef.current = true;
-      if (replace) {
+      if (mode === 'replace') {
         setLoading(true);
       } else {
         setLoadingMore(true);
@@ -224,26 +227,41 @@ export default function Timeline({ newEvent }: TimelineProps) {
           })
         );
 
-        setTotalCount(count ?? totalCount);
+        setTotalCount((currentTotalCount) => count ?? currentTotalCount);
         setHasMore(
           count !== null
             ? (pageIndex + 1) * PAGE_SIZE < count
             : (signedEvents as TimelineEvent[]).length === PAGE_SIZE
         );
-        setPage(pageIndex);
+        if (mode === 'replace') {
+          setStartPage(pageIndex);
+          setEndPage(pageIndex);
+        } else if (mode === 'append') {
+          setEndPage(pageIndex);
+        } else {
+          setStartPage(pageIndex);
+        }
         setEvents((prev) => {
-          const merged = replace ? signedEvents : [...prev, ...signedEvents];
+          const merged =
+            mode === 'replace'
+              ? signedEvents
+              : mode === 'prepend'
+                ? [...signedEvents, ...prev]
+                : [...prev, ...signedEvents];
           const unique = new Map<string, TimelineEvent>();
           merged.forEach((event) => unique.set(event.id, event));
           return sortByEventDateAsc(Array.from(unique.values()));
         });
+        succeeded = true;
       }
     } finally {
       isFetchingRef.current = false;
       setLoading(false);
       setLoadingMore(false);
     }
-  };
+
+    return succeeded;
+  }, [getSignedUrl]);
 
   useEffect(() => {
     let isActive = true;
@@ -265,7 +283,7 @@ export default function Timeline({ newEvent }: TimelineProps) {
         return;
       }
 
-      fetchPage(0, true);
+      fetchPage(0, 'replace');
       fetchBounds();
     });
 
@@ -277,19 +295,23 @@ export default function Timeline({ newEvent }: TimelineProps) {
             setLoading(false);
             return;
           }
-          fetchPage(0, true);
+          fetchPage(0, 'replace');
           fetchBounds();
         } else {
           setAuthError('请先解锁再查看回忆');
           setEvents([]);
           timelineCache.events = null;
-          timelineCache.page = 0;
+          timelineCache.startPage = 0;
+          timelineCache.endPage = 0;
           timelineCache.hasMore = true;
           timelineCache.totalCount = null;
           timelineCache.monthOptions = [];
           timelineCache.selectedYear = '';
-          timelineCache.selectedMonth = '';
           timelineCache.signedUrlByPath = {};
+          setStartPage(0);
+          setEndPage(0);
+          setSelectedYear('');
+          setPendingScrollToEventId('');
         }
       }
     );
@@ -298,7 +320,7 @@ export default function Timeline({ newEvent }: TimelineProps) {
       isActive = false;
       authListener.subscription.unsubscribe();
     };
-  }, []);
+  }, [fetchBounds, fetchPage]);
 
   useEffect(() => {
     if (!newEvent) return;
@@ -326,55 +348,105 @@ export default function Timeline({ newEvent }: TimelineProps) {
     return () => {
       isActive = false;
     };
-  }, [newEvent]);
+  }, [newEvent, getSignedUrl]);
 
   const years = useMemo(
     () => Array.from(new Set(monthOptions.map((item) => item.year))),
     [monthOptions]
   );
 
-  const monthsForYear = useMemo(() => {
-    if (!selectedYear) return [];
-    return monthOptions
-      .filter((item) => item.year === selectedYear)
-      .map((item) => item.month);
-  }, [monthOptions, selectedYear]);
+  const handleJumpToYear = async (year: number) => {
+    const startDate = `${year}-01-01`;
+    const endDate = `${year + 1}-01-01`;
 
-  const handleJumpToMonth = async (year: number, month: number) => {
-    const startDate = `${year}-${String(month).padStart(2, '0')}-01`;
-    const nextMonth = month === 12 ? 1 : month + 1;
-    const nextYear = month === 12 ? year + 1 : year;
-    const endDate = `${nextYear}-${String(nextMonth).padStart(2, '0')}-01`;
-
-    const { count: monthCount } = await supabase
+    const { data: firstData, error: firstError } = await supabase
       .from('timeline_events')
-      .select('id', { count: 'exact', head: true })
+      .select('id,event_date')
       .gte('event_date', startDate)
-      .lt('event_date', endDate);
+      .lt('event_date', endDate)
+      .order('event_date', { ascending: true })
+      .limit(1)
+      .maybeSingle();
 
-    if (!monthCount) {
-      setInfoMessage('该月份暂无记录');
+    if (firstError || !firstData?.id) {
+      setInfoMessage('该年份暂无记录');
       return;
     }
 
     const { count: beforeCount } = await supabase
       .from('timeline_events')
       .select('id', { count: 'exact', head: true })
-      .lt('event_date', startDate);
+      .lt('event_date', firstData.event_date);
 
     const targetPage = Math.floor((beforeCount ?? 0) / PAGE_SIZE);
-    await fetchPage(targetPage, true);
-
-    if (timelineRef.current) {
-      timelineRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    const loaded = await fetchPage(targetPage, 'replace');
+    if (loaded) {
+      setPendingScrollToEventId(firstData.id);
     }
   };
 
-  const stateRef = useRef({ page, loadingMore, hasMore, fetchPage });
+  type StateSnapshot = {
+    startPage: number;
+    endPage: number;
+    loadingMore: boolean;
+    hasMore: boolean;
+    fetchPage: typeof fetchPage;
+  };
+
+  const stateRef = useRef<StateSnapshot>({
+    startPage: 0,
+    endPage: 0,
+    loadingMore: false,
+    hasMore: true,
+    fetchPage,
+  });
 
   useEffect(() => {
-    stateRef.current = { page, loadingMore, hasMore, fetchPage };
+    stateRef.current = { startPage, endPage, loadingMore, hasMore, fetchPage };
   });
+
+  useEffect(() => {
+    if (!pendingScrollToEventId) return;
+
+    const targetNode = eventRefs.current[pendingScrollToEventId];
+    if (!targetNode) return;
+
+    requestAnimationFrame(() => {
+      targetNode.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      setPendingScrollToEventId('');
+    });
+  }, [events, pendingScrollToEventId]);
+
+  const loadPreviousRef = useCallback((node: HTMLDivElement | null) => {
+    if (topObserverRef.current) {
+      topObserverRef.current.disconnect();
+      topObserverRef.current = null;
+    }
+
+    if (!node) return;
+
+    topObserverRef.current = new IntersectionObserver(
+      (entries) => {
+        if (!entries[0]?.isIntersecting) return;
+
+        const previousPage = stateRef.current.startPage - 1;
+        if (previousPage < 0 || stateRef.current.loadingMore) return;
+
+        const scrollBefore = window.scrollY;
+        const heightBefore = document.documentElement.scrollHeight;
+
+        stateRef.current.fetchPage(previousPage, 'prepend').then(() => {
+          requestAnimationFrame(() => {
+            const heightAfter = document.documentElement.scrollHeight;
+            window.scrollTo({ top: scrollBefore + (heightAfter - heightBefore) });
+          });
+        });
+      },
+      { rootMargin: '200px 0px 0px 0px' }
+    );
+
+    topObserverRef.current.observe(node);
+  }, []);
 
   const loadMoreRef = useCallback((node: HTMLDivElement | null) => {
     if (observerRef.current) {
@@ -388,13 +460,13 @@ export default function Timeline({ newEvent }: TimelineProps) {
       (entries) => {
         if (!entries[0]?.isIntersecting) return;
         const {
-          page: currPage,
+          endPage: currPage,
           loadingMore: isLoad,
           hasMore: hasM,
           fetchPage: doFetch,
         } = stateRef.current;
         if (!isLoad && hasM) {
-          doFetch(currPage + 1, false);
+          doFetch(currPage + 1, 'append');
         }
       },
       { rootMargin: '200px' }
@@ -405,13 +477,13 @@ export default function Timeline({ newEvent }: TimelineProps) {
 
   useEffect(() => {
     timelineCache.events = events;
-    timelineCache.page = page;
+    timelineCache.startPage = startPage;
+    timelineCache.endPage = endPage;
     timelineCache.hasMore = hasMore;
     timelineCache.totalCount = totalCount;
     timelineCache.monthOptions = monthOptions;
     timelineCache.selectedYear = selectedYear;
-    timelineCache.selectedMonth = selectedMonth;
-  }, [events, page, hasMore, totalCount, monthOptions, selectedYear, selectedMonth]);
+  }, [events, startPage, endPage, hasMore, totalCount, monthOptions, selectedYear]);
 
   if (loading) {
     return (
@@ -441,8 +513,10 @@ export default function Timeline({ newEvent }: TimelineProps) {
           onChange={(e) => {
             const value = e.target.value;
             setSelectedYear(value ? Number(value) : '');
-            setSelectedMonth('');
             setInfoMessage('');
+            if (value) {
+              handleJumpToYear(Number(value));
+            }
           }}
           className="border border-stone-200 rounded-lg px-3 py-2 text-sm text-stone-600 bg-white/80"
         >
@@ -450,27 +524,6 @@ export default function Timeline({ newEvent }: TimelineProps) {
           {years.map((year) => (
             <option key={year} value={year}>
               {year}年
-            </option>
-          ))}
-        </select>
-        <select
-          value={selectedMonth}
-          onChange={(e) => {
-            const value = e.target.value;
-            const month = value ? Number(value) : '';
-            setSelectedMonth(month);
-            setInfoMessage('');
-            if (selectedYear && month) {
-              handleJumpToMonth(selectedYear, month);
-            }
-          }}
-          className="border border-stone-200 rounded-lg px-3 py-2 text-sm text-stone-600 bg-white/80"
-          disabled={!selectedYear}
-        >
-          <option value="">选择月份</option>
-          {monthsForYear.map((month) => (
-            <option key={month} value={month}>
-              {String(month).padStart(2, '0')}月
             </option>
           ))}
         </select>
@@ -484,12 +537,17 @@ export default function Timeline({ newEvent }: TimelineProps) {
 
       <div className="absolute left-1/2 top-0 bottom-0 w-1 bg-[#E8DDD8] transform -translate-x-1/2 rounded-full"></div>
 
+      <div ref={loadPreviousRef} className="h-4 w-full" />
+
       {events.map((event, index) => (
         <motion.div
           initial={{ opacity: 0, y: 50 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5, delay: index * 0.1 }}
           key={event.id}
+          ref={(node) => {
+            eventRefs.current[event.id] = node;
+          }}
           className={`flex flex-row relative items-center gap-4 ${index % 2 === 0 ? 'flex-row-reverse' : ''}`}
           style={{
             marginTop: index === 0 ? 0 : -THUMB_CENTER_GAP,
