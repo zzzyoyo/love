@@ -130,10 +130,12 @@ export default function Timeline({ newEvent }: TimelineProps) {
   };
 
   const sortByEventDateAsc = (list: TimelineEvent[]) =>
-    [...list].sort(
-      (a, b) =>
-        new Date(a.event_date).getTime() - new Date(b.event_date).getTime()
-    );
+    [...list].sort((a, b) => {
+      const dateDiff =
+        new Date(a.event_date).getTime() - new Date(b.event_date).getTime();
+      if (dateDiff !== 0) return dateDiff;
+      return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+    });
 
   const buildMonthOptions = (start: Date, end: Date) => {
     const options: { year: number; month: number; label: string }[] = [];
