@@ -169,7 +169,7 @@ export default function Timeline({ newEvent }: TimelineProps) {
 
       const { data: sessionData } = await supabase.auth.getSession();
       if (!sessionData.session) {
-        setAuthError('请先解锁后查看回忆');
+        setAuthError('请先解锁再查看回忆');
         setEvents([]);
         return;
       }
@@ -219,8 +219,38 @@ export default function Timeline({ newEvent }: TimelineProps) {
   };
 
   useEffect(() => {
-    fetchPage(0, true);
-    fetchBounds();
+    let isActive = true;
+
+    supabase.auth.getSession().then(({ data }) => {
+      if (!isActive) return;
+      if (!data.session) {
+        setAuthError('请先解锁再查看回忆');
+        setEvents([]);
+        setLoading(false);
+        return;
+      }
+
+      fetchPage(0, true);
+      fetchBounds();
+    });
+
+    const { data: authListener } = supabase.auth.onAuthStateChange(
+      (_event, session) => {
+        if (session) {
+          setAuthError('');
+          fetchPage(0, true);
+          fetchBounds();
+        } else {
+          setAuthError('请先解锁再查看回忆');
+          setEvents([]);
+        }
+      }
+    );
+
+    return () => {
+      isActive = false;
+      authListener.subscription.unsubscribe();
+    };
   }, []);
 
   useEffect(() => {

@@ -16,6 +16,13 @@ export default function UnlockGate({ onUnlock }: UnlockGateProps) {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
+  const toCuteError = (raw: string) => {
+    if (raw.includes('答案不正确') || raw.includes('解锁失败')) {
+      return '错啦！！！🖕️😠';
+    }
+    return raw;
+  };
+
   const handleUnlock = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -42,7 +49,7 @@ export default function UnlockGate({ onUnlock }: UnlockGateProps) {
     } catch (err: unknown) {
       const messageText =
         err instanceof Error ? err.message : '出现了一点小问题';
-      setError(messageText);
+      setError(toCuteError(messageText));
       setTimeout(() => setError(''), 2000);
     } finally {
       setLoading(false);
@@ -121,7 +128,7 @@ export default function UnlockGate({ onUnlock }: UnlockGateProps) {
             <motion.p
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
-              className="text-red-500 text-sm mt-4"
+              className="text-stone-500 text-sm mt-4 bg-[#F8F3F1] rounded-full px-4 py-2 inline-block"
             >
               {error}
             </motion.p>
