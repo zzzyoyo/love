@@ -22,6 +22,7 @@ const PAGE_SIZE = 10;
 const THUMB_HEIGHT = 224;
 const THUMB_CENTER_GAP = THUMB_HEIGHT / 2;
 const SIGNED_URL_TTL_MS = 55 * 60 * 1000;
+const MEDIA_RETRY_LIMIT = 1;
 
 type SignedUrlEntry = { url: string; expiresAt: number };
 type LoadMode = 'replace' | 'append' | 'prepend';
@@ -577,10 +578,14 @@ export default function Timeline({ newEvent }: TimelineProps) {
                       data-path={event.media_url}
                       onError={async (e) => {
                         const target = e.currentTarget;
+                        const retryCount = Number(target.dataset.retryCount || '0');
+                        if (retryCount >= MEDIA_RETRY_LIMIT) return;
+                        target.dataset.retryCount = String(retryCount + 1);
+
                         const { signedUrl } = await getSignedUrl(
                           target.dataset.path || ''
                         );
-                        if (signedUrl) {
+                        if (signedUrl && signedUrl !== target.currentSrc) {
                           target.src = signedUrl;
                         }
                       }}
@@ -595,10 +600,14 @@ export default function Timeline({ newEvent }: TimelineProps) {
                       data-path={event.media_url}
                       onError={async (e) => {
                         const target = e.currentTarget;
+                        const retryCount = Number(target.dataset.retryCount || '0');
+                        if (retryCount >= MEDIA_RETRY_LIMIT) return;
+                        target.dataset.retryCount = String(retryCount + 1);
+
                         const { signedUrl } = await getSignedUrl(
                           target.dataset.path || ''
                         );
-                        if (signedUrl) {
+                        if (signedUrl && signedUrl !== target.currentSrc) {
                           target.src = signedUrl;
                         }
                       }}

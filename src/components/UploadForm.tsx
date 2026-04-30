@@ -11,6 +11,47 @@ interface UploadFormProps {
   onUploaded?: (event: TimelineEvent) => void;
 }
 
+const COMMON_IMAGE_MIME_TYPES = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/gif',
+  'image/avif',
+]);
+
+const fileNameWithoutExt = (name: string) =>
+  name.includes('.') ? name.slice(0, name.lastIndexOf('.')) : name;
+
+const convertImageToJpeg = async (input: File): Promise<File> => {
+  const bitmap = await createImageBitmap(input);
+  const canvas = document.createElement('canvas');
+  canvas.width = bitmap.width;
+  canvas.height = bitmap.height;
+
+  const context = canvas.getContext('2d');
+  if (!context) {
+    throw new Error('图片转换失败：浏览器不支持 Canvas');
+  }
+
+  context.fillStyle = '#ffffff';
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.drawImage(bitmap, 0, 0);
+  bitmap.close();
+
+  const blob = await new Promise<Blob | null>((resolve) => {
+    canvas.toBlob((value) => resolve(value), 'image/jpeg', 0.9);
+  });
+
+  if (!blob) {
+    throw new Error('图片转换失败：无法导出 JPG');
+  }
+
+  return new File([blob], `${fileNameWithoutExt(input.name)}.jpg`, {
+    type: 'image/jpeg',
+    lastModified: Date.now(),
+  });
+};
+
 export default function UploadForm({ onUploaded }: UploadFormProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -67,18 +108,35 @@ export default function UploadForm({ onUploaded }: UploadFormProps) {
       let mediaType = 'image';
 
       if (file) {
+        let fileToUpload = file;
+
+        if (
+          file.type.startsWith('image/') &&
+          !COMMON_IMAGE_MIME_TYPES.has(file.type)
+        ) {
+          try {
+            fileToUpload = await convertImageToJpeg(file);
+          } catch {
+            throw new Error(
+              '该图片格式暂不支持直接上传，请先转换为 JPG/PNG 后重试'
+            );
+          }
+        }
+
         // 判断类型
-        mediaType = file.type.startsWith('video/') ? 'video' : 'image';
-        
+        mediaType = fileToUpload.type.startsWith('video/') ? 'video' : 'image';
+
         // 生成唯一文件名 (当前时间戳 + 随机字符串)
-        const fileExt = file.name.split('.').pop();
+        const fileExt = fileToUpload.type === 'image/jpeg'
+          ? 'jpg'
+          : fileToUpload.name.split('.').pop() || 'bin';
         const fileName = `${Math.random().toString(36).substring(2, 15)}_${Date.now()}.${fileExt}`;
         const filePath = `${fileName}`;
 
         // 上传到 supabase storage
         const { error: uploadError } = await supabase.storage
           .from('love-media')
-          .upload(filePath, file);
+          .upload(filePath, fileToUpload);
 
         if (uploadError) {
           throw new Error('上传文件失败: ' + uploadError.message);
